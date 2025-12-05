@@ -3,7 +3,7 @@ from A2C import A2C
 from common.utils import agg_double_list
 
 import sys
-import gym
+import gymnasium as gym
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -35,12 +35,12 @@ EPSILON_DECAY = 500
 RANDOM_SEED = 2017
 
 
-def run(env_id="CartPole-v0"):
+def run(env_id="CartPole-v1"):
 
     env = gym.make(env_id)
-    env.seed(RANDOM_SEED)
+    #env.seed(RANDOM_SEED)
     env_eval = gym.make(env_id)
-    env_eval.seed(RANDOM_SEED)
+    #env_eval.seed(RANDOM_SEED)
     state_dim = env.observation_space.shape[0]
     if len(env.action_space.shape) > 1:
         action_dim = env.action_space.shape[0]
