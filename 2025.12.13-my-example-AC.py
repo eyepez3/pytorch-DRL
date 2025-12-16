@@ -9,9 +9,12 @@ import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from PIL import Image
 from torchviz import make_dot
+import matplotlib.pyplot as plt
 
 def wrapAngle(angle):
     angle2 = np.copy(angle)
+    if np.abs(angle2) > np.pi:
+        print('|angle| > pi')
     angle2 = np.arctan2(np.sin(angle2), np.cos(angle2))
     return(angle2)
 
@@ -49,6 +52,67 @@ def getRelDistDir(posA, posB):
     range = np.linalg.norm(posB - posA)
     rel_dir = np.arctan2(dY,dX) # radians
     return(range,rel_dir)
+
+def plot_trial_metrics(step_data, metrics, title="Training Metrics", normalize=False):
+    """
+    step_data : list or np.ndarray
+        Step indices (e.g. [0, 1, 2, ..., T])
+    metrics : dict
+        { "name": list or np.ndarray of values }
+    title : str
+        Plot title
+    normalize : bool
+        If True, normalize each metric to [0, 1]
+    """
+
+    plt.figure(figsize=(10, 5))
+
+    for name, values in metrics.items():
+        values = np.asarray(values)
+
+        if normalize:
+            min_v, max_v = values.min(), values.max()
+            if max_v > min_v:
+                values = (values - min_v) / (max_v - min_v)
+
+        plt.plot(step_data, values, label=name)
+
+    plt.xlabel("Step")
+    plt.ylabel("Value")
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+
+def create_figure(trial,metrics):
+    n = len(metrics)
+    fig, axes = plt.subplots(n, 1, num=trial, figsize=(10, 2.5 * n), sharex=True)
+    return(fig,axes)
+
+def plot_trial_metrics_subplots(fig,axes,step_data, metrics, title="Training Metrics", normalize=False):
+    #fig = plt.figure(trial)
+    n = len(metrics)
+    if n == 1:
+        axes = [axes]
+
+    for ax, (name, values) in zip(axes, metrics.items()):
+        if normalize:
+            min_v, max_v = values.min(), values.max()
+            if max_v > min_v:
+                values = (values - min_v) / (max_v - min_v)
+        if isinstance(values, torch.Tensor):
+            values = values.detach().numpy()
+        ax.plot(step_data, values)
+        ax.set_ylabel(name)
+        ax.grid(True)
+
+    axes[-1].set_xlabel("Step")
+    fig.suptitle(title)
+    plt.tight_layout()
+    #plt.show()
+    plt.pause(.01)
 
 # --- 1. Define the Actor Network Class ---
 
@@ -306,7 +370,7 @@ class a2c_model(object):
                     self.stop_update[i] = True
                     print('stop updating agent %d' % (i))
 
-        return(closs_list,aloss_list,tloss_list)
+        return(np.sum(closs_list),np.sum(aloss_list),np.sum(tloss_list))
 
 # --- 2. Example Usage ---
 if __name__ == '__main__':
@@ -361,6 +425,8 @@ if __name__ == '__main__':
     max_steps = 1000
     trial_max_steps = max_steps
 
+    trial_steps_list = []
+
     for trials in range(max_trials):
 
         # get relative posistion and direction
@@ -374,6 +440,18 @@ if __name__ == '__main__':
         done = False
         mymodel.reset()
 
+        step_list = []
+        dir_list = []
+        curr_err_list = []
+        new_dir_list = []
+        steer_list = []
+        value_list = []
+        reward_list = []
+        mu_list = []
+        std_list = []
+        closs_list = []
+        ploss_list = []
+
         for steps in range(max_steps):
 
             
@@ -386,6 +464,9 @@ if __name__ == '__main__':
             state_in_t = torch.tensor(state_in,dtype=torch.float32)
             # get model action
             action_t, log_prob, value, mu, std  = mymodel.getActionValue(state_in_t,0)
+            value_np = value.detach().numpy()
+            mu_np = mu.detach().numpy()
+            std_np = std.detach().numpy()
 
             # apply action to steer direction
             action_np = action_t.detach().numpy()
@@ -410,15 +491,56 @@ if __name__ == '__main__':
                 print('angle error within max_steer range!')
 
             print('T: %d, S: %03d, P Dir: %0.4f, c err: %0.4f, Steer: %0.4f, N Dir: %0.4f, rwd: %0.4f, val: %0.4f' \
-                % (trials,steps,dir*180/np.pi,curr_err*180/np.pi,steer*180/np.pi,new_dir*180/np.pi,reward,value))
+                % (trials,steps,dir*180/np.pi,curr_err*180/np.pi,steer*180/np.pi,new_dir*180/np.pi,reward,value_np))
             dir = new_dir
 
+            # plot results
+
             #update(self, log_probs_t, values_t, curr_obs, next_obs, rewards, dones):
-            mymodel.update(log_prob,state_in_t,next_state_t,reward,done)
+            closs,ploss,_ = mymodel.update(log_prob,state_in_t,next_state_t,reward,done)
+
+            step_list.append(steps)
+            dir_list.append(dir*180/np.pi)
+            curr_err_list.append(curr_err*180/np.pi)
+            new_dir_list.append(new_dir*180/np.pi)
+            steer_list.append(steer*180/np.pi)
+            reward_list.append(reward)
+            value_list.append(value_np)
+            mu_list.append(mu_np)
+            std_list.append(std_np)
+            closs_list.append(closs)
+            ploss_list.append(ploss)
+
+            # plot metrics
+            metrics = {
+                "Curr Dir": dir_list,
+                "Curr error": curr_err_list,
+                "New Dir": new_dir_list,
+                "Steer": steer_list,
+                "Reward": reward_list,
+                "value": value_list,
+                "mean": mu_list,
+                "stdev": std_list,
+                "critic loss": closs_list,
+                "actor loss": ploss_list
+            }
+
+            if (steps == 0):
+                fig,axes = create_figure(trials,metrics)
+
+            plot_trial_metrics_subplots(
+                fig,
+                axes,
+                step_data=step_list,
+                metrics=metrics,
+                title="A2C Training Metrics",
+                normalize=False
+            )
 
             if (done):
                 break
 
+        trial_steps_list = steps
         if (steps < trial_max_steps):
             trial_max_steps = steps
             print ('trial %d had new min steps of %d' % (trials, trial_max_steps))
@@ -427,5 +549,6 @@ if __name__ == '__main__':
         print('trial %d done!\n' % trials)
 
     print('done!')
+    print('average steps: %0.2f' % np.mean(np.array(trial_steps_list)))
 
 

@@ -5,6 +5,10 @@ common/kfac.py
 *.py[cod]
 *$py.class
 
+# computational graphs
+*.pdf
+*graph*
+
 # C extensions
 *.so
 
