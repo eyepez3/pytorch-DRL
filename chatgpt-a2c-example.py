@@ -21,6 +21,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print('device type = :',device)
 
 
 # -------------------------------------------------------
@@ -46,11 +47,10 @@ class Actor(nn.Module):
 
     def get_action(self, state):
         mean, std = self.forward(state)
-        dist = torch.distributions.Normal(mean, std)
+        dist = torch.distributions.Normal(mean, std) # creates handle to dist object
         action = dist.sample()
         log_prob = dist.log_prob(action).sum(axis=-1)
         return action, log_prob, dist
-
 
 class Critic(nn.Module):
     """State-value network."""
@@ -99,7 +99,8 @@ class A2CAgent:
         state_np = np.array(state)
         state_t = torch.FloatTensor(state_np).to(device).unsqueeze(0)
         action, log_prob, _ = self.actor.get_action(state_t)
-        action = action.cpu().detach().numpy()[0]
+        #move to cpu, detach from the computational graph, convert to numpy array
+        action = action.cpu().detach().numpy()[0]  
         return np.clip(action, -self.max_action, self.max_action), log_prob
 
     def compute_loss(self, trajectory):
