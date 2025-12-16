@@ -11,14 +11,91 @@ from PIL import Image
 from torchviz import make_dot
 import matplotlib.pyplot as plt
 
-def wrapAngle(angle):
+def add_angles_wrap_2pi(a1, a2):
+    """
+    Add two angles and wrap the result to [-2π, 2π].
+
+    Parameters
+    ----------
+    a1, a2 : float
+        Angles in radians
+
+    Returns
+    -------
+    float
+        Angle wrapped to [-2π, 2π]
+    """
+    angle = a1 + a2
+    two_pi = 2 * np.pi
+
+    # Wrap to [-2π, 2π]
+    angle = (angle + two_pi) % (4 * np.pi) - two_pi
+
+    return angle
+
+def wrapAngle_pi(angle):
     angle2 = np.copy(angle)
+    sign = np.sign(angle)
     if np.abs(angle2) > np.pi:
         print('|angle| > pi')
+        angle2 = sign*2*np.pi - angle2
     angle2 = np.arctan2(np.sin(angle2), np.cos(angle2))
     return(angle2)
 
-def getAngle(dir1,dir2,ref_norm=None):
+#def angle_diff_wrap_2pi(a1, a2):
+def getAngle_2pi(a1, a2):
+    """
+    Signed angle difference (a2 - a1), wrapped to [-2π, 2π].
+
+    Parameters
+    ----------
+    a1, a2 : float or np.ndarray
+        Angles in radians
+
+    Returns
+    -------
+    diff : float or np.ndarray
+        Wrapped signed angle difference
+    """
+    diff = a2 - a1
+    two_pi = 2 * np.pi
+
+    # Wrap into [-2π, 2π]
+    diff = (diff + two_pi) % (4 * np.pi) - two_pi
+
+    return diff
+
+def getAngle1(a1, a2):
+    """
+    Compute unwrapped signed angle difference (a2 - a1) in radians.
+    Result is in (-pi, pi].
+
+    Parameters
+    ----------
+    a1, a2 : float or np.ndarray
+        Angles in radians
+    Positive  -> Counter-clockwise (CCW)
+    Negative  -> Clockwise (CW)
+    Zero      -> No rotation
+
+    Returns
+    -------
+    diff : float or np.ndarray
+        Signed angle difference
+    """
+    diff = np.arctan2(np.sin(a2 - a1), np.cos(a2 - a1))
+    if diff > 0:
+        direction = "CCW"
+    elif diff < 0:
+        direction = "CW"
+    else:
+        direction = "NONE"
+    print(f"Angle difference (deg): {np.rad2deg(diff):.2f}")
+    print(f"Direction: {direction}")
+
+    return diff
+
+def getAngle2(dir1,dir2,ref_norm=None):
     
     # assume unity vector with direction (angle) as input
     # determines angle between velocity vectors
@@ -182,13 +259,18 @@ class ActorCritic(nn.Module):
         #mu = self.actor_mu(base_out)
         mu = self.actor_mu(base_out)
         #std = torch.exp(self.log_std)
-        var = self.actor_var(base_out)
-        std = torch.sqrt(var)
+        std = self.actor_var(base_out) + 1e-6
+        #std = torch.sqrt(var)
         
         return (mu,std,value)
     
     def getActionValue(self, state_in):
         mu, std, value = self.forward(state_in)
+        mu = torch.clamp(mu, -0.999, 0.999)
+        std = torch.clamp(std, 1e-6, 10.0)
+        # NaN guard
+        if torch.isnan(mu).any() or torch.isnan(std).any():
+            raise ValueError(f"NaN detected: mu={mu}, std={std}")
         dist = torch.distributions.Normal(mu, std)
         action = dist.rsample()
         log_prob = dist.log_prob(action).sum(-1)
@@ -419,13 +501,24 @@ if __name__ == '__main__':
     max_trials = 100
     max_steer = 15*np.pi/180
 
-    dmax = np.pi
+    dmax = 2*np.pi
     dmax = np.float32(dmax)
 
     max_steps = 1000
     trial_max_steps = max_steps
 
     trial_steps_list = []
+
+    a1 = np.deg2rad(350)
+    a2 = np.deg2rad(10)
+    diff = getAngle_2pi(a1, a2)
+    print("Angle diff (rad):", diff)
+    print("Angle diff (deg):", np.rad2deg(diff))
+    a1 = np.deg2rad(10)
+    a2 = np.deg2rad(350)
+    diff = getAngle_2pi(a1, a2)
+    print("Angle diff (rad):", diff)
+    print("Angle diff (deg):", np.rad2deg(diff))
 
     for trials in range(max_trials):
 
@@ -456,7 +549,7 @@ if __name__ == '__main__':
 
             
             # get desired direction
-            curr_err = getAngle(dir,rdir)
+            curr_err = getAngle_2pi(dir,rdir)
             # get desired steer
             #desired_steer = np.clip(desired_dir,-max_steer,max_steer)
 
@@ -472,17 +565,27 @@ if __name__ == '__main__':
             action_np = action_t.detach().numpy()
             steer = action_np[0] * max_steer
 
-            new_dir = np.float32(wrapAngle(dir + steer))
+            new_dir = np.float32(add_angles_wrap_2pi(dir,steer))
             new_dir2 = new_dir/dmax
 
             next_state = np.array([new_dir2,rdir/dmax],dtype='float32')
             next_state_t = torch.tensor(next_state,dtype=torch.float32)
 
             # determine reward
-            new_err = getAngle(new_dir,rdir)
+            new_err = getAngle_2pi(new_dir,rdir)
+            
+            # +1,-1 simple reward structure (12/15/2025
             reward = -1.0
             if (np.abs(new_err) < np.abs(curr_err)):
                 reward = 1.0
+            '''
+            # linear reward structure 12/16/2025
+            reward = 0
+            if (max_steer < new_err < max_steer):
+                reward = (1 - np.abs(new_err)/max_steer)
+            else:
+                reward = -1.0*(np.abs(new_err) - max_steer)/(np.pi - max_steer)
+            '''
             total_reward += reward
 
             if (np.abs(new_err) < max_steer):
@@ -490,7 +593,7 @@ if __name__ == '__main__':
                 reward += 10
                 print('angle error within max_steer range!')
 
-            print('T: %d, S: %03d, P Dir: %0.4f, c err: %0.4f, Steer: %0.4f, N Dir: %0.4f, rwd: %0.4f, val: %0.4f' \
+            print('T: %d, S: %03d, C Dir: %0.4f, c err: %0.4f, Steer: %0.4f, N Dir: %0.4f, rwd: %0.4f, val: %0.4f' \
                 % (trials,steps,dir*180/np.pi,curr_err*180/np.pi,steer*180/np.pi,new_dir*180/np.pi,reward,value_np))
             dir = new_dir
 
@@ -501,7 +604,7 @@ if __name__ == '__main__':
 
             step_list.append(steps)
             dir_list.append(dir*180/np.pi)
-            curr_err_list.append(curr_err*180/np.pi)
+            curr_err_list.append(np.abs(curr_err)*180/np.pi)
             new_dir_list.append(new_dir*180/np.pi)
             steer_list.append(steer*180/np.pi)
             reward_list.append(reward)
@@ -514,8 +617,7 @@ if __name__ == '__main__':
             # plot metrics
             metrics = {
                 "Curr Dir": dir_list,
-                "Curr error": curr_err_list,
-                "New Dir": new_dir_list,
+                "Dir err": curr_err_list,
                 "Steer": steer_list,
                 "Reward": reward_list,
                 "value": value_list,
@@ -528,12 +630,13 @@ if __name__ == '__main__':
             if (steps == 0):
                 fig,axes = create_figure(trials,metrics)
 
+            plot_title = 'Training Metrics (Trial %d, Step %d)' % (trials, steps)
             plot_trial_metrics_subplots(
                 fig,
                 axes,
                 step_data=step_list,
                 metrics=metrics,
-                title="A2C Training Metrics",
+                title=plot_title,
                 normalize=False
             )
 
