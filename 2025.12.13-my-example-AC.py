@@ -265,6 +265,23 @@ class ActorCritic(nn.Module):
         return (mu,std,value)
     
     def getActionValue(self, state_in):
+        # version used up until 12/16/2025 9:45am
+        mu, std, value = self.forward(state_in)
+        #mu = torch.clamp(mu, -0.999, 0.999)
+        std = torch.clamp(std, 1e-4, 10.0)
+        # NaN guard
+        if torch.isnan(mu).any() or torch.isnan(std).any():
+            raise ValueError(f"NaN detected: mu={mu}, std={std}")
+        dist = torch.distributions.Normal(mu, std)
+        z = dist.rsample()
+        action = torch.tanh(z)
+        log_prob = dist.log_prob(z)
+        log_prob -= torch.log(1 - action.pow(2) + 1e-6)
+        log_prob = log_prob.sum(-1)
+        return (action, log_prob, value, mu, std)
+    
+    def getActionValue2(self, state_in):
+        # version used up until 12/16/2025 9:45am
         mu, std, value = self.forward(state_in)
         mu = torch.clamp(mu, -0.999, 0.999)
         std = torch.clamp(std, 1e-6, 10.0)
@@ -274,9 +291,6 @@ class ActorCritic(nn.Module):
         dist = torch.distributions.Normal(mu, std)
         action = dist.rsample()
         log_prob = dist.log_prob(action).sum(-1)
-        #action_np = action.detach().numpy()
-        #mu_np = mu.detach().numpy()
-        #std_np = std.detach().numpy()
         return (action, log_prob, value, mu, std)
 
 class a2c_model(object):
@@ -564,6 +578,9 @@ if __name__ == '__main__':
             # apply action to steer direction
             action_np = action_t.detach().numpy()
             steer = action_np[0] * max_steer
+            if (np.abs(steer) > max_steer):
+                print('steer > max steer! ')
+                print('stop here!!!')
 
             new_dir = np.float32(add_angles_wrap_2pi(dir,steer))
             new_dir2 = new_dir/dmax
@@ -575,6 +592,7 @@ if __name__ == '__main__':
             new_err = getAngle_2pi(new_dir,rdir)
             
             # +1,-1 simple reward structure (12/15/2025
+            '''
             reward = -1.0
             if (np.abs(new_err) < np.abs(curr_err)):
                 reward = 1.0
@@ -585,7 +603,7 @@ if __name__ == '__main__':
                 reward = (1 - np.abs(new_err)/max_steer)
             else:
                 reward = -1.0*(np.abs(new_err) - max_steer)/(np.pi - max_steer)
-            '''
+            
             total_reward += reward
 
             if (np.abs(new_err) < max_steer):
