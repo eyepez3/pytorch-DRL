@@ -476,6 +476,11 @@ if __name__ == '__main__':
     model_path = f'./models'
     device = 'cpu'
     num_minnows = 1
+
+    field_height = 5.12 #2.5
+    aspect_ratio = 2
+    field_width = aspect_ratio * field_height
+    field_size = field_width,field_height
     
         
     # 1. Initialize the Actor
@@ -537,9 +542,25 @@ if __name__ == '__main__':
     for trials in range(max_trials):
 
         # get relative posistion and direction
-        pos = np.array([2.0,5.0])
+        #pos = np.array([2.0,5.0])
         dir = 180*np.pi/180
-        goal_pos = np.array([8.0,5.0])
+
+        #goal_pos = np.array([8.0,5.0])
+        x_range = field_size[0] * np.array([0.85,0.95]) 
+        y_range = field_size[1] * np.array([0.1,0.9]) 
+        goal_pos = np.array([np.random.uniform(x_range[0],x_range[1]),np.random.uniform(y_range[0],y_range[1])])
+
+        x_range = field_size[0] * np.array([0.05,0.1]) # (west, left side of grid)
+        yzone = field_size[1] / (num_minnows)
+        #for id in range(num_minnows):
+        id = 0
+        y_range = yzone*id + np.array([0.05,0.95])*yzone
+        posY = np.random.uniform(y_range[0],y_range[1])
+        posX = np.random.uniform(x_range[0],x_range[1])
+        pos = np.array([posX,posY])
+        
+
+        
         rdist,rdir = getRelDistDir(pos,goal_pos)
         rdir = np.float32(rdir)
 
@@ -599,14 +620,14 @@ if __name__ == '__main__':
             '''
             # linear reward structure 12/16/2025
             reward = 0
-            if (max_steer < new_err < max_steer):
+            if (np.abs(new_err) < max_steer):
                 reward = (1 - np.abs(new_err)/max_steer)
             else:
                 reward = -1.0*(np.abs(new_err) - max_steer)/(np.pi - max_steer)
             
             total_reward += reward
 
-            if (np.abs(new_err) < max_steer):
+            if (np.abs(new_err) < max_steer/5):
                 done = True
                 reward += 10
                 print('angle error within max_steer range!')
